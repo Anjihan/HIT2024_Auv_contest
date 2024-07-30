@@ -24,7 +24,7 @@ cv2.createTrackbar('Upper S', 'Binary Image', init_upper_s, 255, nothing)
 cv2.createTrackbar('Lower V', 'Binary Image', init_lower_v, 255, nothing)
 cv2.createTrackbar('Upper V', 'Binary Image', init_upper_v, 255, nothing)
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(6)
 
 while True:
     ret, frame = cap.read()
