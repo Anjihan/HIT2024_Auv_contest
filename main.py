@@ -5,9 +5,16 @@ import rospy
 import os
 from time import sleep, time
 import statistics
+import tf_conversions
+import tf
+
+from sensor_msgs.msg import Imu
+from geometry_msgs.msg import Quaternion
+ref_zero = 165 #IMU데이터 기반으로 수정 필요  /Y가 전방
+D2R = 3.141592/180
+R2D = 180/3.141592
 
 from std_msgs.msg import Int32, String, Float32, Float64
-from sensor_msgs.msg import Image
 
 from cv_bridge import CvBridge
 import cv2
@@ -106,7 +113,7 @@ class MainLoop:
         rospy.Subscriber("lidar_warning", String, self.warning_callback) # lidar 에서 받아온 object 탐지 subscribe (warning / safe)
 
         rospy.Subscriber("realsense_warning", String, self.warning_callback1) # 리얼센스에서 받아온 부표와 거리 탐지 subscribe (??)
-
+        rospy.Subscriber("mavros/imu/data", Imu, self.imu_callback)
         self.initDrive_t1 = rospy.get_time()
 
     def timerCallback(self, _event):
@@ -116,6 +123,35 @@ class MainLoop:
         except:
             pass
     
+    def quaternion_to_yaw(self, quat):
+        # 쿼터니안을 오일러 각도로 변환
+        euler = tf_conversions.transformations.euler_from_quaternion([quat.x, quat.y, quat.z, quat.w])
+        yaw = euler[2]
+        # yaw = 195*D2R
+        
+        # Yaw 각도를 조정하여 X축이 위를 향할 때 220도가 되도록 함
+        # 220도를 라디안으로 변환
+        target_yaw_rad = ref_zero * D2R #radian
+        
+        # Yaw 값을 조정
+        adjusted_yaw = 2*3.141592 -yaw - target_yaw_rad + 60*D2R#-165*D2R
+
+        print('before_yaw : ',yaw*R2D)
+        # Yaw 값이 2π 이상이면 2π를 빼서 범위를 -π ~ π로 조정
+        adjusted_yaw = adjusted_yaw % (2 * 3.141592)
+        return adjusted_yaw
+
+    def imu_callback(self, data):
+        # IMU 데이터 콜백
+        yaw = self.quaternion_to_yaw(data.orientation)
+        print('after_yaw',(yaw)*R2D) #R2D가 뭔지 질문
+        br = tf.TransformBroadcaster()
+        br.sendTransform((0, 0, 0),
+                        tf_conversions.transformations.quaternion_from_euler(0, 0, yaw),
+                        rospy.Time.now(),
+                        "robot",
+                        "sonar_frame")
+
     def laneCallback(self, _data):
         # detect lane
         if self.initialized == False:
@@ -416,15 +452,15 @@ class MainLoop:
         elif self.is_safe == False: #일단 첫번째 미션으로 들어가도록 변수 설정해놨음 -> 추후에 다른 조건 and로 추가 가능
             self.buoy_Drive()
 
-        # 1. dynamic obstacle
+        # 2. 터널 들어가는 mission
         elif self.is_safe == False and self.isDynamicMission == True:
             self.dynamicObstacle()
 
-        # 2. child protect driving
+        # 3. 화살표 contact, QR 확인 mission
         elif self.is_child_detected == True:
             self.childProtectDrive()
 
-        # 3. rubbercone mission
+        # 4. 음향등대 찾기 mission
         elif self.is_rubbercone_mission == True:
             self.rubberconeDrive()
             self.publish()

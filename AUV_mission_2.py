@@ -52,40 +52,27 @@ while camera.isOpened():
     # 감지된 Blob을 원본 이미지에 표시
     for k in keypoints:
         cv2.circle(im, (int(k.pt[0]), int(k.pt[1])), int(k.size / 2), (0, 0, 255), -1)  # Blob 주위에 채워진 원 그리기
-        cv2.line(im, (int(k.pt[0]) - 20, int(k.pt[1])), (int(k.pt[0]) + 20, int(k.pt[1])), (0, 0, 0), 3)  # 수평선 그리기
-        cv2.line(im, (int(k.pt[0]), int(k.pt[1]) - 20), (int(k.pt[0]), int(k.pt[1]) + 20), (0, 0, 0), 3)  # 수직선 그리기
+        cv2.line(im, (int(k.pt[0]), 0), (int(k.pt[0]), im.shape[0]), (0, 0, 0), 3)  # 세로선 그리기
 
     # 화면을 3등분 하는 수직선 그리기
     cv2.line(im, (im.shape[1] // 3, 0), (im.shape[1] // 3, im.shape[0]), (255, 255, 255), 2)
     cv2.line(im, (2 * im.shape[1] // 3, 0), (2 * im.shape[1] // 3, im.shape[0]), (255, 255, 255), 2)
 
-    # 각 영역의 가운데에 작은 직사각형 그리기
-    rect_width = im.shape[1] // 15  # 작은 직사각형의 폭
-    rect_height = im.shape[0]  # 작은 직사각형의 높이
+    # 각 영역의 가운데에 긴 세로선 그리기
     for i in range(3):
-        cv2.rectangle(im, (i * im.shape[1] // 3 + im.shape[1] // 6 - rect_width // 2, im.shape[0] // 2 - rect_height // 2), 
-                      (i * im.shape[1] // 3 + im.shape[1] // 6 + rect_width // 2, im.shape[0] // 2 + rect_height // 2), 
-                      (0, 255, 0), 2)  # 각 영역의 가운데에 작은 직사각형 그리기
-
-    # Blob의 위치 확인 및 메시지 출력
-    for k in keypoints:
-        if im.shape[1] // 3 < k.pt[0] < 2 * im.shape[1] // 3:  # 가운데 영역
-            if im.shape[0] // 3 < k.pt[1] < 2 * im.shape[0] // 3:  # 직사각형 내부에 있는지 확인
-                print("center")
-            else:
-                print("middle")
-        elif k.pt[0] < im.shape[1] // 3:  # 왼쪽 영역
-            if im.shape[0] // 3 < k.pt[1] < 2 * im.shape[0] // 3:  # 직사각형 내부에 있는지 확인
-                print("move right")
-            else:
-                print("left")
-        elif k.pt[0] > 2 * im.shape[1] // 3:  # 오른쪽 영역
-            if im.shape[0] // 3 < k.pt[1] < 2 * im.shape[0] // 3:  # 직사각형 내부에 있는지 확인
-                print("move left")
-            else:
-                print("right")
-        else:  # 가운데 영역 외의 영역
-            print("outside rectangle")
+        # 영역의 가운데 좌표
+        middle_x = i * im.shape[1] // 3 + im.shape[1] // 6
+        # 가운데 세로선 그리기
+        cv2.line(im, (middle_x, 0), (middle_x, im.shape[0]), (0, 255, 0), 2)
+        # 초록색 선 내부에 Blob이 있는지 확인하여 출력
+        for k in keypoints:
+            if middle_x - im.shape[1] // 6 < k.pt[0] < middle_x + im.shape[1] // 6:  # 초록색 선 내부
+                if im.shape[0] // 3 < k.pt[1] < 2 * im.shape[0] // 3:  # 직사각형 내부에 있는지 확인
+                    print("center")
+                else:
+                    print("move right" if i == 0 else "move left" if i == 2 else "middle")
+        # 각 영역의 가운데를 나타내는 초록색 선 그리기
+        cv2.line(im, (middle_x, im.shape[0] // 6), (middle_x, 5 * im.shape[0] // 6), (0, 255, 0), 2)
 
     # 전처리된 이미지(이진 마스크) 표시
     cv2.imshow("Preprocessed Image (color Mask)", color_mask)
