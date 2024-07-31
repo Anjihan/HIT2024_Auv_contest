@@ -4,91 +4,51 @@
 import rospy
 import os
 from time import sleep, time
-import statistics
-import tf_conversions
-import tf
-
-from sensor_msgs.msg import Imu
-from geometry_msgs.msg import Quaternion
-ref_zero = 165 #IMU데이터 기반으로 수정 필요  /Y가 전방
-D2R = 3.141592/180
-R2D = 180/3.141592
 
 from std_msgs.msg import Int32, String, Float32, Float64
+from sensor_msgs.msg import Image
+from sensor_msgs.msg import Imu
+
+import tf
+import tf_conversions
+from geometry_msgs.msg import Quaternion
 
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
 
-from warper import Warper
-from evaluateColor import Evaluator
+from qr_test import qr_code_reader
+
+from sensor_msgs.msg import Joy
+import pyrealsense2 as rs
+
+ref_zero = 165 #IMU데이터 기반으로 수정 필요  /Y가 전방
+D2R = 3.141592/180
+R2D = 180/3.141592
+
+
 
 class MainLoop:
     
     def __init__(self):
-        self.warper = Warper()
+        self.qr_reader = qr_code_reader()
         self.bridge = CvBridge()
-        self.evalutator = Evaluator()
-
-        self.current_lane = "LEFT"
-        self.is_safe = True
-        self.initialized = False
-
-        self.current_buoy = ""
 
         #-----------------------------------------------------<<-mission 상태 변수->>--------------------------------------------------#
-        self.mission2 = False
-        self.mission3 = False
-        self.mission4 = False
-        self.mission5 = False
-        self.mission6 = False
-        #-----------------------------------------------------<<-mission 상태 변수->>--------------------------------------------------#
-
-        self.speed_msg = Float64() # speed msg create -> linear or lateral 주행값으로 바꾸기
-        self.angle_msg = Float64() # angle msg create -> imu data or yaw 값으로 바꾸기
-        self.angle_ema = Float64() # imu data로 방향 튜닝으로 바꾸기
-        self.angle_ema.data = 0.57 # 경기장에서 레인 방향 imu 초기값 설정
-
-        self.initDriveFlag = True
-
-        # for static obstacle => mission 1 부표 미션
-        self.is_doing_static_mission = False
-        self.static_t1 = 0.0           # 부표 미션 시작 시간
-        self.static_flag = False       # 부표 미션 시간을 구하기 위한 lock
-
-        #------------------------------------------------mission_1-------------------------------------------------------------#
-        # for static obstacle => mission 1 부표 미션
-        self.mission1 = False
-        self.buoy_t1 = 0.0           # 부표 미션 시작 시간
-        self.buoy_flag = False       # 부표 미션 시간을 구하기 위한 lock
-        #------------------------------------------------mission_1-------------------------------------------------------------#
-
-
-        # for dynamic obstacle
-        self.is_doing_dynamic_mission = False
-        self.dynamic_t1 = 0.0           # 동적 미션 시작 시간
-        self.dynamic_flag = False       # 동적 미션 시간을 구하기 위한 lock
-        self.isDynamicMission = False
-
-
-        # for child sign => QR 코드로 교체
-        self.is_child_detected = False # child sign 검출 여부
-        self.is_child_detecting = False
-        self.slow_t1 = 0.0             # 어린이보호구역 주행 시간
-        self.sign_data = 0             # child sign id
-        self.slow_flag = False         # 저속 주행 시작 시간을 구하기 위한 lock
-        self.child_cnt = 0
-        self.none_child_cnt = 0
+        self.mission_C = False
+        self.mission_D_L = False
+        self.mission_D_R = False
+        self.mission_E = False
+        self.mission_F = False
+     
+        #------------------------------------------------mission_C_녹색골대-------------------------------------------------------------#
+        #QR미션 -> QR인식 후 동작 작동여부 결정 flag
+        self.QR_L_right = False
+        self.QR_R_right = False
         self.stop_t1 = 0.0
-        self.stop_flag = False         # 정지를 시작하는 시간을 구하기 위한 lock
-        self.angle_child_before = 0.57
-
-        # for rubbercone misson
-        self.is_rubbercone_mission = False # rubber cone 미션 구간 진입 여부
-        self.rubbercone_angle_error = 0    # 양옆 rubber cone 좌표 오차
+        self.static_flag_C = False         # depth홀드 후 하강을 시작하는 시간을 구하기 위한 lock
 
         #-----------------------------------------------------<<리얼센스 사용 미션인 경우>>--------------------------------------------------#
-        self.is_realsense_mission = False
         #
         #
         #-----------------------------------------------------<<리얼센스 사용 미션인 경우>>--------------------------------------------------#
@@ -96,43 +56,57 @@ class MainLoop:
         self.obstacle_img = []
         self.originalImg = []
 
-        # publisher : mainAlgorithm에서 계산한 속력과 조향각을 전달함
+        # publisher : mainAlgorithm에서 계산한 제어 전달
         rospy.Timer(rospy.Duration(1.0/30.0), self.timerCallback)
-        self.webot_speed_pub = rospy.Publisher("/commands/motor/speed", Float64, queue_size=1) # motor speed
-        self.webot_angle_pub = rospy.Publisher("/commands/servo/position", Float64, queue_size=1) # servo angle
-        self.webot_lane_pub = rospy.Publisher("/currentLane", Float64, queue_size=1) # 1 = left, 2 = right
+        
+        self.AUV_speed_pub = rospy.Publisher("/commands/motor/speed", Float64, queue_size=1) # AUV speed 전진,후진,레터럴,상승,하강 -> 각각 속도에 맞추어 튜닝해서 정리
+        self.AUV_mode_pub = rospy.Publisher("/commands/servo/position", Float64, queue_size=1) # AUV mode -> stabilize, depth hold 모드 제어
+        self.AUV_angle_pub = rospy.Publisher("/commands/servo/orientation", Float64, queue_size=1) # AUV angle -> yaw 속도 제어 or Imu 데이터 기반 자세제어 -> C, D 미션에서는 안쓸예정, 추후 필요한 미션 담당자가 사용할 것
 
-        self.AUV_speed_pub = rospy.Publisher("/commands/motor/speed", Float64, queue_size=1) # AUV speed
-        self.AUV_angle_pub = rospy.Publisher("/commands/servo/position", Float64, queue_size=1) # AUV angle -> yaw 속도 제어 or Imu 데이터 기반 자세제어
+        self.image_pub = rospy.Publisher("/camera/image_raw", Image, queue_size=1) # 카메라 이미지 ROS를 통해서 publish
 
 
-        # subscriber : child_sign id, rubber_cone 조향각, 물체 감지 상태를 받아 속력과 조향각을 구함
-        rospy.Subscriber("usb_cam/image_rect_color", Image, self.laneCallback)
-        rospy.Subscriber("sign_id", Int32, self.child_sign_callback)
-        rospy.Subscriber("rubber_cone", Float32, self.rubbercone_callback)
-        rospy.Subscriber("lidar_warning", String, self.warning_callback) # lidar 에서 받아온 object 탐지 subscribe (warning / safe)
+        #제어 입력으로 넣을 조이스틱 데이터 예시 -> 수정해야될 수 있음
+        # joy_msg = Joy()
+        # joy_msg.axes = [0.0, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Assuming the left joystick forward is axes[1] = 0.2
+        # joy_msg.buttons = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # All buttons are not pressed
 
-        rospy.Subscriber("realsense_warning", String, self.warning_callback1) # 리얼센스에서 받아온 부표와 거리 탐지 subscribe (??)
+
+        # subscriber : joy데이터를 통해서 미션 시작, qr인식 확인, 자석 센서값 확인, 음향 등대값 확인
+        rospy.Subscriber('/joy', Joy, self.joystickCallback)
         rospy.Subscriber("mavros/imu/data", Imu, self.imu_callback)
-        self.initDrive_t1 = rospy.get_time()
 
-    def timerCallback(self, _event):
-        try:
-            self.mainAlgorithm()
-            pass
-        except:
-            pass
-    
-    def quaternion_to_yaw(self, quat):
+        rospy.Subscriber("usb_cam/image_rect_color", Image, self.QR_Callback_L)
+        rospy.Subscriber("usb_cam/image_rect_color", Image, self.QR_Callback_R)        
+        rospy.Subscriber("sign_id", Int32, self.child_sign_callback)
+
+
+
+        rospy.Subscriber("자석 센서값 쓰게된다면", Float32, self.NS_callback)
+        rospy.Subscriber("음향 등대값 쓰게된다면", String,  self.Sound_callback) # lidar 에서 받아온 object 탐지 subscribe (warning / safe)
+        rospy.Subscriber("/camera/image_raw", Image, self.image_callback)
+   
+
+    def image_callback(self, data): #ROS 이미지 받아와서 CV에서 처리가능하게 바꿈 -> (추후 영상처리 필요하면 이 함수에서 분기하세요) -> 처리한 CV영상 다시 ROS형식으로 publish
+        # ROS 이미지 메시지에서 OpenCV 이미지로 변환
+        cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+        
+        # 원본 이미지를 ROS 메시지로 변환
+        ros_image = self.bridge.cv2_to_imgmsg(cv_image, "bgr8")
+        
+        # ROS 메시지 퍼블리시
+        self.image_pub.publish(ros_image)
+   
+    def quaternion_to_yaw(self, quat): #IMU 데이터 처리함수 by 승훈 - 오키나와 해양수중로봇대회
         # 쿼터니안을 오일러 각도로 변환
         euler = tf_conversions.transformations.euler_from_quaternion([quat.x, quat.y, quat.z, quat.w])
         yaw = euler[2]
         # yaw = 195*D2R
-        
+
         # Yaw 각도를 조정하여 X축이 위를 향할 때 220도가 되도록 함
         # 220도를 라디안으로 변환
         target_yaw_rad = ref_zero * D2R #radian
-        
+
         # Yaw 값을 조정
         adjusted_yaw = 2*3.141592 -yaw - target_yaw_rad + 60*D2R#-165*D2R
 
@@ -140,345 +114,175 @@ class MainLoop:
         # Yaw 값이 2π 이상이면 2π를 빼서 범위를 -π ~ π로 조정
         adjusted_yaw = adjusted_yaw % (2 * 3.141592)
         return adjusted_yaw
-
-    def imu_callback(self, data):
+    
+    def imu_callback(self, data): #IMU 데이터 처리함수 by 승훈 - 오키나와 해양수중로봇대회
         # IMU 데이터 콜백
         yaw = self.quaternion_to_yaw(data.orientation)
-        print('after_yaw',(yaw)*R2D) #R2D가 뭔지 질문
+        print('after_yaw',(yaw)*R2D)
         br = tf.TransformBroadcaster()
         br.sendTransform((0, 0, 0),
-                        tf_conversions.transformations.quaternion_from_euler(0, 0, yaw),
-                        rospy.Time.now(),
-                        "robot",
-                        "sonar_frame")
+                         tf_conversions.transformations.quaternion_from_euler(0, 0, yaw),
+                         rospy.Time.now(),
+                         "robot",
+                         "sonar_frame")
 
-    def laneCallback(self, _data):
+    def NS_callback(self, _data): #자석 어떻게 처리할지 몰라서 일단 만들어둠
+        pass
+    
+    def Sound_callback(self, _data): #음향등대 어떻게 처리할지 몰라서 일단 만들어둠
+        pass
+
+    def timerCallback(self, _event): #mainAlgorithm 30Hz 주기로 돌리는함수
+        try:
+            self.mainAlgorithm()
+            pass
+        except:
+            pass
+    
+    def QR_Callback_L(self, _data): # QR_detect.py에서 넘겨준 qr값이 맞는지 확인하는 함수
         # detect lane
-        if self.initialized == False:
-            cv2.namedWindow("Simulator_Image", cv2.WINDOW_NORMAL) 
-            cv2.createTrackbar('low_H', 'Simulator_Image', 128, 360, nothing)
-            cv2.createTrackbar('low_L', 'Simulator_Image', 134, 255, nothing)
-            cv2.createTrackbar('low_S', 'Simulator_Image', 87, 255, nothing)
-            cv2.createTrackbar('high_H', 'Simulator_Image', 334, 360, nothing)
-            cv2.createTrackbar('high_L', 'Simulator_Image', 255, 255, nothing)
-            cv2.createTrackbar('high_S', 'Simulator_Image', 251, 255, nothing)
-            self.initialized = True
         
         cv2_image = self.bridge.imgmsg_to_cv2(_data)
         self.originalImg = cv2_image.copy()
         
-        if self.evalutator.evaluate(self.originalImg) == True:
-            self.isDynamicMission = True
+        if self.qr_reader.qr_return(self.originalImg) == 1:
+            self.QR_L_right = True
         else:
-            self.isDynamicMission = False
+            self.QR_R_right = False
         
+    def QR_Callback_R(self, _data): # QR_detect.py에서 넘겨준 qr값이 맞는지 확인하는 함수
+        # detect lane
+        
+        cv2_image = self.bridge.imgmsg_to_cv2(_data)
+        self.originalImg = cv2_image.copy()
+        
+        if self.qr_reader.qr_return(self.originalImg) == 2:
+            self.QR_R_right = True
+        else:
+            self.QR_L_right = False
 
-        # cv2.imshow("original", cv2_image) 
+#===========================================================================#
+#===========================================================================#
+#=============================== 미션함수코딩구역 ==============================#
+#===========================================================================#
+#===========================================================================#
+    def QR_code_Drive_L(self, _data): #mission D QR 코드 미션
+        pass
 
-        low_H = cv2.getTrackbarPos('low_H', 'Simulator_Image')
-        low_L = cv2.getTrackbarPos('low_L', 'Simulator_Image')
-        low_S = cv2.getTrackbarPos('low_S', 'Simulator_Image')
-        high_H = cv2.getTrackbarPos('high_H', 'Simulator_Image')
-        high_L = cv2.getTrackbarPos('high_L', 'Simulator_Image')
-        high_S = cv2.getTrackbarPos('high_S', 'Simulator_Image')
+    def QR_code_Drive_R(self, _data): #mission D QR 코드 미션
+        pass
 
-        cv2.cvtColor(cv2_image, cv2.COLOR_BGR2HLS) # BGR to HSV
-
-        lower_lane = np.array([low_H, low_L, low_S]) # 
-        upper_lane = np.array([high_H, high_L, high_S])
-
-        lane_image = cv2.inRange(cv2_image, lower_lane, upper_lane)
-
-        cv2.imshow("Lane Image", lane_image)
-        self.laneDetection(lane_image)
-
-        cv2.waitKey(1)
     
-    def laneDetection(self, lane_image):
-        kernel_size = 5
-        blur_img = cv2.GaussianBlur(lane_image,(kernel_size, kernel_size), 0)
-        warped_img = self.warper.warp(blur_img)
-        # cv2.imshow("warped_img", warped_img)
-        self.slide_img, self.slide_x_location, self.current_lane_window = self.slidewindow.slidewindow(warped_img)
-        cv2.imshow("slide_img", self.slide_img)
-        # rospy.loginfo("CURRENT LANE WINDOW: {}".format(self.current_lane_window))
+    def green_Goal_Drive(self): # mission C 녹색 골대 지나는 미션
+        rospy.loginfo("MISSION: GOAL")
+        t2 = rospy.get_time() #-> 갱신되면서 변할 시간 (변수) 
+         
+        # depth hold 0.5m 이동 후 천천히 전진 (5)초 -> 괄호 친 숫자는 튜닝해야되는 변수
 
-    def child_sign_callback(self, _data):
-        # aruco 알고리즘으로 child sign이 검출되었다면 is_child_detected = True
-        rospy.loginfo(f"ARUCO sign: {_data.data}")
-        if _data.data == 100:
-            self.child_cnt += 1
-            if self.child_cnt >=10 :
-                self.sign_data = _data.data
-                self.is_child_detecting = True
-                self.child_cnt = 0
-        elif _data.data == 0 and self.is_child_detecting == True:
-            self.none_child_cnt += 1
-            self.is_child_detected = True
-            if self.none_child_cnt >= 2: # 60cm 기준
-                self.is_child_detecting = False
-                self.none_child_cnt = 0
-        else :
-            self.sign_data = 0
-
-    def warning_callback(self, _data):
-        # lidar에서 장애물을 인식한 후 상태 변수를 갱신함
-        # rubber cone이 감지되었을 때
-        if self.is_rubbercone_mission == True:
-            self.is_rubbercone_mission = True
-        # lidar_warning 상태가 safe일 때 상태 변수 갱신
-        elif _data.data == "safe":
-            if self.is_doing_static_mission:
-                self.is_safe = False
-            else:
-                self.is_safe = True
-        # lidar_warning 상태가 WARNING일 때(rubber cone이 아닌 장애물이 한 개 이상 감지됨)
-        elif _data.data == "WARNING":
-            self.is_safe = False
-            rospy.loginfo("WARNING!")
+        # 미션을 처음 시작하는 경우 시간을 stop_t1으로 저장함
+        if self.static_flag_C == False:
+            self.stop_t1 = rospy.get_time() # start time -> 미션 시작하는 시간(상수)        
+            self.mode_msg.data = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
+            self.static_flag_C = True
+            
+        # (2)초간 depth hold에서 아래로 -> 0.5m 맞추기
+        elif t2 - self.stop_t1 <= 2:
+            self.speed_msg.data = 0 #하강 joystick 입력으로 바꾸면됨 ========================================================================= 하강
+            
+        # (5)초간 이전 각도로 주행 -> 골대 지나서 얼만큼 가는지 튜닝해야됨
+        elif t2 - self.stop_t1 <= 7: #시간은 누적으로 계산하세요            
+            self.speed_msg.data = 1000 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진
+  
         else:
-            pass
-
-    def warning_callback1(self, _data):
-        # 리얼센스에서 장애물을 인식한 후 상태 변수를 갱신함
-        # (부표 or something)지상 카메라에 데이터가 감지되었을 때 -> 리얼센스를 사용해서 진행할 미션은 여기서 미션의 상태 변수를 갱신
-        if self.is_realsense_mission == True:
-            self.is_realsense_mission = True
-        # 리얼센스에서 감지한 색상(부표)가 특정거리 이하 일 때 상태 변수 갱신
-        elif _data.data == "safe":
-            if self.is_doing_static_mission:
-                self.is_safe = False
-            else:
-                self.is_safe = True
-        # lidar_warning 상태가 WARNING일 때(rubber cone이 아닌 장애물이 한 개 이상 감지됨)
-        elif _data.data == "WARNING":
-            self.is_safe = False
-            rospy.loginfo("WARNING!")
-        else:
-            pass
-
-    def rubbercone_callback(self, _data):
-        self.rubbercone_angle_error = _data.data
-        # rubber cone이 감지된 경우
-        if self.rubbercone_angle_error < 10.0 :
-            self.is_rubbercone_mission = True
-            self.is_safe = True
-        # 감지된 rubber cone이 없는 경우(subscribe 1000.0)
-        else :
-            self.is_rubbercone_mission = False
-
-    def initDrive(self): # 기본 주행 상황 설정 (ex> stabilize에 기본 전진 pwm 설정해두기) -> 전진
-        rospy.loginfo("initDrive")
-        # joy node로 변경
-        self.speed_msg.data = 1000 # 초기 AUV의 전진 속도 or 전진 명령 topic으로 바꾸기
-        self.angle_msg.data = 0.57 # 초기 AUV의 Imu or yaw 데이터값 topic으로 바꾸기
-        initDrive_t2 = rospy.get_time()
-        if initDrive_t2 - self.initDrive_t1 >= 1:
-            self.initDriveFlag = False
-
-        self.webot_angle_pub.publish(self.angle_msg) # 초기 AUV의 전진 속도 or 전진 명령 topic으로 바꾸기
-        self.webot_speed_pub.publish(self.speed_msg) # 초기 AUV의 Imu or yaw 데이터값 topic으로 바꾸기
-        
-    def childProtectDrive(self):
-        rospy.loginfo("MISSION: Child Sign")
-        # child sign detected, waiting sign to disappear.
-        if self.sign_data == 100:
-            self.angle_msg.data = (self.slide_x_location - 280) * 0.0035 + 0.5 + 0.07 # 조향각 계산
-            self.angle_child_before = self.angle_msg.data
-            self.speed_msg.data = 2000 # defalut speed
-        # sign disappered, drive slow
-        elif self.sign_data == 0: 
-            t2 = rospy.get_time() # 정지, 저속 주행 시간 counter
-            # 미션을 처음 시작하는 경우 시간을 stop_t1으로 저장함
-            if self.stop_flag == False:
-                self.stop_t1 = rospy.get_time() # start time
-                self.is_child_detected = True
-                self.stop_flag = True
-            # 5초간 정지
-            elif t2 - self.stop_t1 <= 5:
-                self.speed_msg.data = 0
-                self.angle_msg.data = self.angle_child_before
-            # 1초간 이전 각도로 주행
-            elif t2 - self.stop_t1 <= 6:
-                self.angle_msg.data = self.angle_child_before
-                self.speed_msg.data = 1000
-            else:
-                # 저속 주행을 처음 시작하는 경우 시간을 slow_t1으로 저장함
-                if self.slow_flag == False:
-                    self.slow_t1 = rospy.get_time()
-                    self.is_child_detected = True
-                    self.slow_flag = True
-                elif t2 - self.slow_t1 <= 15:
-                    self.angle_msg.data = (self.slide_x_location - 280) * 0.003 + 0.5 +0.07
-                    self.speed_msg.data = 1000
-                else:
-                    self.stop_flag = False
-                    self.slow_flag = False
-                    self.is_child_detected = False
-                    
-        self.angle_ema.data = 0.8 * self.angle_ema.data + 0.2 * self.angle_msg.data
-        self.webot_speed_pub.publish(self.angle_ema)
-        self.webot_speed_pub.publish(self.speed_msg)
-    
-    def rubberconeDrive(self):
-        rospy.loginfo("MISSION: Rubber Cone")
-        self.is_safe = True
-        self.speed_msg.data = 1500
-        self.angle_msg.data = (self.rubbercone_angle_error  + 0.5  ) * 1.2      
-        rospy.loginfo(f"rubber error: {self.rubbercone_angle_error}")
-        self.current_lane = "LEFT"
-    
-    def obstacleDrive(self): # mission 1 응용 가능
-        rospy.loginfo("MISSION: STATIC")
-        t2 = rospy.get_time()
-        # 장애물 미션 시작 시간
-        if self.static_flag == False:
-            self.static_t1 = rospy.get_time()
-            self.is_doing_static_mission = True
-            self.static_flag = True
-        
-        if self.current_lane == "LEFT":
-            self.speed_msg.data = 1000
-            if t2 - self.static_t1 < 1.8:
-                self.angle_msg.data = 0.87
-            elif t2 - self.static_t1 < 2.6:
-                self.angle_msg.data = 0.27
-            else:
-                self.angle_msg.data = 0.57
-                self.current_lane = "RIGHT"
-                self.is_doing_static_mission = False
-                self.static_flag = False
-
-        elif self.current_lane == "RIGHT":
-            self.speed_msg.data = 1000
-            if t2 - self.static_t1 < 1.8:
-                self.angle_msg.data = 0.27
-            elif t2 - self.static_t1 < 2.6:
-                self.angle_msg.data = 0.87
-            else:
-                self.angle_msg.data = 0.57
-                self.current_lane = "LEFT"
-                self.is_doing_static_mission = False
-                self.static_flag = False
-        
-        self.webot_speed_pub.publish(self.speed_msg)
-        self.webot_angle_pub.publish(self.angle_msg)
-
-    def dynamicObstacle(self): # mission 1 응용 가능
-        rospy.loginfo("MISSION: Dynamic")
-        self.static_flag = False
-        self.is_doing_static_mission = False
-        self.speed_msg.data = 0
-        self.angle_msg.data = 0.57            
-        
-        self.publish()
-
-    def defaultDrive(self):
-        rospy.loginfo("MISSION: Default Driving")
-        self.speed_msg.data = 2000 # defalut speed
-        self.angle_msg.data = (self.slide_x_location - 280) * 0.003 + 0.57 # 조향각 계산
-        
-        # 조향범위 제한
-        if self.angle_msg.data < 0.1:
-            self.angle_msg.data = 0.1
-    #-------------------------------------------mission 함수-----------------------------------------#
-    def realsense_mission_callback(self, _data):
-        # 리얼센스에서 거리 및 색을 인식한 후 상태 변수를 갱신함
-        # 부표와의 거리가 특정 수치 아래로 감지되었을 때
-        if self.mission1 == True:
-            self.mission1 == True
-
-        # lidar_warning 상태가 safe일 때 상태 변수 갱신
-        elif _data.data == "safe":
-            if self.is_doing_static_mission:
-                self.is_safe = False
-            else:
-                self.is_safe = True
-        # lidar_warning 상태가 WARNING일 때(rubber cone이 아닌 장애물이 한 개 이상 감지됨)
-        elif _data.data == "WARNING":
-            self.is_safe = False
-            rospy.loginfo("WARNING!")
-        else:
-            pass
-
-    def buoy_Drive(self):
-        rospy.loginfo("MISSION: buoy_mission1")
-        t2 = rospy.get_time()
-        # 장애물 미션 시작 시간
-        if self.buoy_flag == False:
-            self.static_t1 = rospy.get_time()
-            self.mission1 = True
-            self.buoy_flag = True
-        
-        #원(부표)을 검출해서 해당 거리 이내에 있을 때 state를 left middle right로 구분
-
-        if self.current_buoy == "LEFT":
-            if imu_data < 180 degree:
-                if self.current_buoy == "LEFT":
-                    self.speed_msg.data = 0 #선속도 0으로 일단 정지
-                    self.speed_msg.data = 100 #lateral로 middle로 올때까지 이동
-
-                if self.current_buoy == "middle":
-                    self.angle_msg.data = 0.5 #left로 올때까지 yaw 회전
-            else:
-                self.angle_msg.data = 1 #다시 정면을 보도록 AUV 회전
-                #self.speed_msg.data = -100 #lateral로 화각에 오른쪽 부표가 잡힐때까지 와야될수도?
-                self.mission1 = False
-                self.buoy_flag = False
-
-        elif self.current_buoy == "RIGHT":
-            if imu_data < -180 degree:
-                if self.current_buoy == "RIGHT":
-                    self.speed_msg.data = 0 #선속도 0으로 일단 정지
-                    self.speed_msg.data = -100 #lateral로 middle로 올때까지 이동
-
-                if self.current_buoy == "middle":
-                    self.angle_msg.data = -0.5 #left로 올때까지 yaw 회전
-            else:
-                self.angle_msg.data = -1 #다시 정면을 보도록 AUV 회전
-                self.mission1 = False
-                self.buoy_flag = False
-        
+            self.mission_C = False
+                            
         self.AUV_speed_pub.publish(self.speed_msg)
-        self.AUV_angle_pub.publish(self.angle_msg)  
+        self.AUV_mode_pub.publish(self.mode_msg)
 
+    def defaultDrive(self): #기본 AUV 알고리즘에서 주행은 정지로 설정 -> 만약 아무런 커맨드를 안받았을 때는 정지해있도록
+        rospy.loginfo("MISSION: Default Driving")
+        self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
+        self.mode_msg.data = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
+
+        self.AUV_speed_pub.publish(self.speed_msg)
+        self.AUV_mode_pub.publish(self.mode_msg)
+#========================================================================================#
+#========================================================================================#
+#=========================== 조이스틱으로 미션 키기 위한 지정 함수들  ===========================#
+#========================================================================================#
+#========================================================================================#       
+    def joystickCallback(self, data): #조이스틱 데이터 처리하는 callback 함수
+        # Update joystick axes and buttons from the received message
+        self.joystick_axes = data.axes
+        self.joystick_buttons = data.buttons
+
+        # Optional: Print joystick data for debugging
+        rospy.loginfo("Axes: %s", self.joystick_axes)
+        rospy.loginfo("Buttons: %s", self.joystick_buttons)
+
+        # 조이스틱 버튼으로 미션 활성화 (예: 세모 버튼이 버튼 인덱스 1이라고 가정)
+        if data.buttons[1] == 1:  # 세모 버튼이 눌렸을 때 -> 일단 미션 C 가 이런거라고 가정했습니다 수정 요망 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 미션C 조이스틱 버튼
+            self.mission_C = True
+            self.mission_D_L = False
+            self.mission_D_R = False        
+            self.mission_E = False
+            self.mission_F = False
+    
+        elif data.buttons[1] == 2:
+            self.mission_C = False
+            self.mission_D_L = True
+            self.mission_D_R = False        
+            self.mission_E = False
+            self.mission_F = False
+
+        elif data.buttons[1] == 3:
+            self.mission_C = False
+            self.mission_D_L = False
+            self.mission_D_R = True        
+            self.mission_E = False
+            self.mission_F = False
+
+        elif data.buttons[1] == 4:
+            self.mission_C = False
+            self.mission_D_L = False
+            self.mission_D_R = False               
+            self.mission_E = True
+            self.mission_F = False  
+        else:
+            self.mission_C = False
+            self.mission_D_L = False
+            self.mission_D_R = False              
+            self.mission_E = False
+            self.mission_F = True
+
+        # 필요에 따라 다른 버튼 처리 추가
+        
+        
     def mainAlgorithm(self):
         rospy.loginfo("MAIN")
-        # 0. init drive 
-        if self.initDriveFlag == True:
-            self.initDrive()
+        # C. 녹색 골대 지나는 미션 
+        if self.mission_C == True:
+            self.green_Goal_Drive()
         
-        # 1. 부표 회피 mission
-        elif self.is_safe == False: #일단 첫번째 미션으로 들어가도록 변수 설정해놨음 -> 추후에 다른 조건 and로 추가 가능
-            self.buoy_Drive()
+        # D. QR 코드 읽는 미션 L
+        elif self.mission_D == True:
+            self.QR_code_Drive_L()
 
-        # 2. 터널 들어가는 mission
-        elif self.is_safe == False and self.isDynamicMission == True:
-            self.dynamicObstacle()
+        # D. QR 코드 읽는 미션 R
+        elif self.mission_D == True:
+            self.QR_code_Drive_R()
 
-        # 3. 화살표 contact, QR 확인 mission
-        elif self.is_child_detected == True:
-            self.childProtectDrive()
-
-        # 4. 음향등대 찾기 mission
-        elif self.is_rubbercone_mission == True:
-            self.rubberconeDrive()
-            self.publish()
-        
-        # 5. defalut driving
-        else:
+        # # E. 음향등대
+        elif self.mission_E == True:
             self.defaultDrive()
-            self.publish()
-
-    def publish(self):
-        rospy.loginfo("publish")
-        self.angle_ema.data = 0.3 * self.angle_ema.data + 0.7 * self.angle_msg.data
-
-        self.webot_speed_pub.publish(self.speed_msg) # publish speed
-        self.webot_angle_pub.publish(self.angle_ema) # publish angle
-
-        self.AUV_speed_pub.publish(self.speed_msg) #속도 pub
-        self.AUV_angle_pub.publish(self.angle_ema) #각도 pub
+            
+        # # F. 꼬챙이니까 이건 돌아오는거 용으로 일단 둠
+        elif self.mission_F == True:
+            self.defaultDrive()
+            
+        # 기본 상태 -> 정지
+        else:
+            self.defaultDrive()      
 
 
 def nothing(x):
