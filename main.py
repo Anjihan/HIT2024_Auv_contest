@@ -95,6 +95,9 @@ class MainLoop:
         # self.AUV_angle_pub = rospy.Publisher("/commands/servo/orientation", Float64, queue_size=1) # AUV angle -> yaw 속도 제어 or Imu 데이터 기반 자세제어 -> C, D 미션에서는 안쓸예정, 추후 필요한 미션 담당자가 사용할 것
         # 위 토픽 JOY로 대체
         self.joy_msg = Joy()
+        self.joy_msg.axes = [0.0] * 8  # 예시: 8개의 축
+        self.joy_msg.buttons = [0] * 12  # 예시: 12개의 버튼        
+        
         self.AUV_pub = rospy.Publisher("/joy", Joy, queue_size=1)
             
         self.image_pub1 = rospy.Publisher("/camera1/image_raw", Image, queue_size=10)
@@ -255,14 +258,18 @@ class MainLoop:
         # (2)초간 depth hold 상태에서 왼쪽으로 -> 화각에 왼쪽 라인의 QR만 보이게하기 위함 -> 왼쪽 라인이 카메라 중심에 오도록 맞춰야됨 -------튜닝 필요
         elif t2 - self.stop_t1_D_L <= 2:
             # self.speed_msg.data = 0 #왼쪽 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 왼쪽 레터럴
-            self.joy_msg.axes[3] = 0.5 #lsh  
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+            self.joy_msg.axes[3] = 0.5 #lsh 
+            
             
         # (5)초간 이전 각도로 주행 -> 전진해서 수면 QR에 가까워지기 위함 -> 2.5m 정도 왔다고 가정 ---------------튜닝 필요
         elif t2 - self.stop_t1_D_L <= 7: #시간은 누적으로 계산하세요            
             # self.speed_msg.data = 1000 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진
-            self.joy_msg.axes[4] = 0.5 #lsh  
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+            self.joy_msg.axes[4] = 0.5 #lsh       
   
         elif t2 - self.stop_t1_D_L <= 8: # else로 빼면 계속 켜질꺼같아서 일단 8초로 해둠
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
             self.mission_D_L_front_aline = True #정면카메라 색상 정렬 코드 flag ON
              
         else:
@@ -279,19 +286,24 @@ class MainLoop:
 
                 if number1 == 1:
                     # self.speed_msg.data = 0 #우측 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 우측 레터럴
-                    self.joy_msg.axes[3] = -0.5 #lsh  
+                    self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+                    self.joy_msg.axes[3] = -0.5 #lsh
+                      
                 elif number1 == 2:
                     # self.speed_msg.data = 0 #왼쪽 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 왼쪽 레터럴
+                    self.joy_msg.axes = [0] * len(self.joy_msg.axes)
                     self.joy_msg.axes[3] = 0.5 #lsh  
                 elif number1 == 3:
                     # self.speed_msg.data = 0 #하강 joystick 입력으로 바꾸면됨 ========================================================================= 하강
+                    self.joy_msg.axes = [0] * len(self.joy_msg.axes)
                     self.joy_msg.axes[1] = 0.5 #lsh  
                 elif number1 == 4:
                     # self.speed_msg.data = 0 #상승 joystick 입력으로 바꾸면됨 ========================================================================= 상승
+                    self.joy_msg.axes = [0] * len(self.joy_msg.axes)
                     self.joy_msg.axes[1] = -0.5 #lsh  
                 else:
                     # self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
-                    self.joy_msg.axes[4] = 0.5 #lsh  
+                    self.defaultDrive() 
                     self.mission_D_L_bottom_start = True  #바닥 qr로 가기 위한 flag            
                     self.mission_D_L_front_aline = False
                     break
@@ -309,23 +321,27 @@ class MainLoop:
             # (2)초간 depth hold 상태에서 아래로 -> 바닥 QR을 보기 위해서 최대한 내려야됨 ------------튜닝 필요
             elif t3 - self.stop_t1_D_L_2 <= 2:
                 # self.speed_msg.data = 0 #왼쪽 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 왼쪽 레터럴
+                self.joy_msg.axes = [0] * len(self.joy_msg.axes)
                 self.joy_msg.axes[3] = 0.5 #lsh  
             # 바닥QR을 찾기위해서 천천히 전진          
             else:
                 # self.speed_msg.data = 0 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진
+                self.joy_msg.axes = [0] * len(self.joy_msg.axes)
                 self.joy_msg.axes[4] = 0.5 #lsh              
                 if (self.qr_top_result == 1):
                     # self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
-                    self.joy_msg.axes[4] = 0 #lsh  
+                    self.defaultDrive()
                     self.mission_D_L_front_start = True
                     self.mission_D_L_bottom_start = False
                     
         if self.mission_D_L_front_start == True:
             rospy.loginfo("MISSION: QR_LL_front")                    
             # self.speed_msg.data = 0 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진 
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
             self.joy_msg.axes[4] = 0.5 #lsh                         
             if (self.qr_front_result == 1):
                 # self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
+                self.joy_msg.axes = [0] * len(self.joy_msg.axes)
                 self.joy_msg.axes[4] = 0 #lsh  
                 self.mission_D_L_front_end = True
                 self.mission_D_L_front_start = False            
@@ -333,7 +349,8 @@ class MainLoop:
         if self.mission_D_L_front_end == True:
             rospy.loginfo("MISSION: QR_LL_front_end")            
             # self.speed_msg.data = 0 #빠르게 전진 joystick 입력으로 바꾸면됨 ========================================================================= 빠르게 전진  
-            self.joy_msg.axes[4] = 0.5 #lsh                     
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+            self.joy_msg.axes[4] = 0.7 #lsh                     
             self.mission_D_L = False    
                                         
         # self.AUV_speed_pub.publish(self.speed_msg)
@@ -452,57 +469,69 @@ class MainLoop:
     def green_Goal_Drive(self): # mission C 녹색 골대 지나는 미션
         rospy.loginfo("MISSION: GOAL")
         t2 = rospy.get_time() #-> 갱신되면서 변할 시간 (변수) 
-         
+        rospy.loginfo(f"Current time: {t2}")
         # depth hold 0.5m 이동 후 천천히 전진 (5)초 -> 괄호 친 숫자는 튜닝해야되는 변수
-
+        rospy.loginfo(f"static_flag_C: {self.static_flag_C}")
+        
         # 미션을 처음 시작하는 경우 시간을 stop_t1으로 저장함
-        if self.static_flag_C == False:
-            self.stop_t1_C = rospy.get_time() # start time -> 미션 시작하는 시간(상수)        
-            # self.mode_msg.data = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
+        if not self.static_flag_C:  # self.static_flag_C == False 대신 not self.static_flag_C 사용
+            self.stop_t1_C = rospy.get_time() # start time -> 미션 시작하는 시간(상수)
             self.joy_msg.buttons[3] = 1 #lsh
+            rospy.loginfo(f"Stop time set: {self.stop_t1_C}")
             self.static_flag_C = True
-            
+            rospy.loginfo(f"static_flag_C set to True")
+            rospy.loginfo("MISSION: GOAL_start")
+        
+        rospy.loginfo(f"Elapsed time: {t2 - self.stop_t1_C}")
+        
         # (2)초간 depth hold에서 아래로 -> 0.5m 맞추기
-        elif t2 - self.stop_t1_C <= 2:
-            # self.speed_msg.data = 0 #하강 joystick 입력으로 바꾸면됨 ========================================================================= 하강
+        if t2 - self.stop_t1_C <= 2:
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
             self.joy_msg.axes[1] = 0.5 #lsh
+            rospy.loginfo("MISSION: GOAL_down")
             
         # (5)초간 이전 각도로 주행 -> 골대 지나서 얼만큼 가는지 튜닝해야됨
-        elif t2 - self.stop_t1_C <= 7: #시간은 누적으로 계산하세요            
-            # self.speed_msg.data = 1000 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진
+        elif t2 - self.stop_t1_C <= 7: #시간은 누적으로 계산하세요
+            rospy.loginfo("MISSION: GOAL_foward1")
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)            
             self.joy_msg.axes[4] = 0.5 #lsh
-  
+            rospy.loginfo("MISSION: GOAL_foward2")
+    
         else:
             self.mission_C = False
+            self.static_flag_C = False  # 미션 종료 후 재설정
+            rospy.loginfo("MISSION: GOAL_end")
+            self.defaultDrive()  # 미션이 끝나면 기본 상태로 전환            
                             
-        # self.AUV_speed_pub.publish(self.speed_msg)
-        # self.AUV_mode_pub.publish(self.mode_msg)
         self.AUV_pub.publish(self.joy_msg) #lsh
+
 
     def defaultDrive(self): #기본 AUV 알고리즘에서 주행은 정지로 설정 -> 만약 아무런 커맨드를 안받았을 때는 정지해있도록
         rospy.loginfo("MISSION: Default Driving")
-        self.joy_msg.axes[4] = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
-        self.joy_msg.buttons[3] = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
+        # 모든 축을 0으로 초기화
+        self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+        
+        # depth hold 버튼을 활성화
+        self.joy_msg.buttons[3] = 1
+        
+        # 기본 상태로 publish
+        self.AUV_pub.publish(self.joy_msg)
 
-        # self.AUV_speed_pub.publish(self.speed_msg)
-        # self.AUV_mode_pub.publish(self.mode_msg)
-        self.AUV_pub.publish(self.joy_msg) #lsh
 #========================================================================================#
 #========================================================================================#
 #=========================== 조이스틱으로 미션 키기 위한 지정 함수들  ===========================#
 #========================================================================================#
 #========================================================================================#       
-    def joystickCallback(self, data): #조이스틱 데이터 처리하는 callback 함수
-        # Update joystick axes and buttons from the received message
+    def joystickCallback(self, data):
         self.joystick_axes = data.axes
         self.joystick_buttons = data.buttons
-
-        # Optional: Print joystick data for debugging
-        rospy.loginfo("Axes: %s", self.joystick_axes)
-        rospy.loginfo("Buttons: %s", self.joystick_buttons)
-
-        # 조이스틱 버튼으로 미션 활성화 (예: 세모 버튼이 버튼 인덱스 1이라고 가정)
-        if self.joystick_axes[7] == 1:  # 세모 버튼이 눌렸을 때 -> 일단 미션 C 가 이런거라고 가정했습니다 수정 요망 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 미션C 조이스틱 버튼
+        
+        # 배열의 길이를 로그로 출력
+        rospy.loginfo(f"Axes length: {len(self.joystick_axes)}")
+        rospy.loginfo(f"Buttons length: {len(self.joystick_buttons)}")
+        
+        # 나머지 로직
+        if len(self.joystick_axes) > 7 and self.joystick_axes[7] == 1:
             rospy.loginfo("Received trigger to start mission_C.")
             self.mission_C = True
             self.mission_D_L = False
@@ -510,35 +539,30 @@ class MainLoop:
             self.mission_E = False
             self.mission_F = False
             rospy.loginfo("Received trigger to start mission_D_L.")    
-        elif self.joystick_axes[6] == 1:
+        elif len(self.joystick_axes) > 6 and self.joystick_axes[6] == 1:
             self.mission_C = False
             self.mission_D_L = True
             self.mission_D_R = False        
             self.mission_E = False
             self.mission_F = False
             rospy.loginfo("Received trigger to start mission_D_R.")
-        elif self.joystick_axes[6] == -1:
+        elif len(self.joystick_axes) > 6 and self.joystick_axes[6] == -1:
             self.mission_C = False
             self.mission_D_L = False
             self.mission_D_R = True        
             self.mission_E = False
             self.mission_F = False
             rospy.loginfo("Received trigger to start mission_E.")
-        elif self.joystick_axes[7] == -1:
+        elif len(self.joystick_axes) > 7 and self.joystick_axes[7] == -1:
             self.mission_C = False
             self.mission_D_L = False
             self.mission_D_R = False               
             self.mission_E = True
             self.mission_F = False  
-            rospy.loginfo("Waiting trigger to start (waiting...).")            
-        else:
-            self.mission_C = False
-            self.mission_D_L = False
-            self.mission_D_R = False              
-            self.mission_E = False
-            self.mission_F = True
+            rospy.loginfo("Waiting trigger to start (waiting...).")
 
-        # 필요에 따라 다른 버튼 처리 추가   
+
+            # 필요에 따라 다른 버튼 처리 추가   
         
     def mainAlgorithm(self):
         rospy.loginfo("MAIN")
@@ -574,7 +598,7 @@ def run():
 
     rospy.init_node("main_class_run")
     control = MainLoop()
-    rospy.Timer(rospy.Duration(1.0/30.0), control.timerCallback) 
+    rospy.Timer(rospy.Duration(1.0/10.0), control.timerCallback) 
     rospy.spin()
 
 if __name__ == "__main__":
