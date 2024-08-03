@@ -100,8 +100,8 @@ class MainLoop:
         self.image_pub1 = rospy.Publisher("/camera1/image_raw", Image, queue_size=10)
         self.image_pub2 = rospy.Publisher("/camera2/image_raw", Image, queue_size=10)
 
-        self.cap1 = cv2.VideoCapture(6) # 전면카메라 -> 내 노트북에서는 VideoCapture(6)임 다르면 추후 수정 요망
-        self.cap2 = cv2.VideoCapture(0) # 위 카메라  -> 추후 번호 찾아서 맞추세요 
+        self.cap1 = cv2.VideoCapture(4) # 전면카메라 -> 내 노트북에서는 VideoCapture(6)임 다르면 추후 수정 요망
+        self.cap2 = cv2.VideoCapture(6) # 위 카메라  -> 추후 번호 찾아서 맞추세요 
 
         # 카메라 두개 다 제대로 켜졌는지 확인
         if not self.cap1.isOpened():
@@ -118,12 +118,6 @@ class MainLoop:
         # subscriber : joy데이터를 통해서 미션 시작, qr인식 확인, 자석 센서값 확인, 음향 등대값 확인
         rospy.Subscriber('/joy', Joy, self.joystickCallback) #조이스틱 값으로 어떤 미션 실행시킬지 데이터 받는 Subscriber입니다
         rospy.Subscriber("mavros/imu/data", Imu, self.imu_callback)
-
-        rospy.Subscriber("usb_cam/image_rect_color", Image, self.QR_Callback_L)
-        rospy.Subscriber("usb_cam/image_rect_color", Image, self.QR_Callback_R)        
-        rospy.Subscriber("sign_id", Int32, self.child_sign_callback)
-
-
 
         # rospy.Subscriber("자석 센서값 쓰게된다면", Float32, self.NS_callback)
         # rospy.Subscriber("음향 등대값 쓰게된다면", String,  self.Sound_callback) # lidar 에서 받아온 object 탐지 subscribe (warning / safe)
@@ -354,7 +348,7 @@ class MainLoop:
         # 미션을 처음 시작하는 경우 시간을 stop_t1으로 저장함
         if self.static_flag_D_R == False:
             self.stop_t1 = rospy.get_time() # start time -> 미션 시작하는 시간(상수)        
-            self.mode_msg.data = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
+            self.joy_msg.buttons[3] = 1 #lsh   #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
             self.static_flag_D_R = True
 
     def center_point(self, image): #지정한 영역 컨투어 중심에 빨간점을 찍는 메소드
@@ -470,7 +464,7 @@ class MainLoop:
             
         # (2)초간 depth hold에서 아래로 -> 0.5m 맞추기
         elif t2 - self.stop_t1_C <= 2:
-            self.speed_msg.data = 0 #하강 joystick 입력으로 바꾸면됨 ========================================================================= 하강
+            # self.speed_msg.data = 0 #하강 joystick 입력으로 바꾸면됨 ========================================================================= 하강
             self.joy_msg.axes[1] = 0.5 #lsh
             
         # (5)초간 이전 각도로 주행 -> 골대 지나서 얼만큼 가는지 튜닝해야됨
@@ -487,8 +481,8 @@ class MainLoop:
 
     def defaultDrive(self): #기본 AUV 알고리즘에서 주행은 정지로 설정 -> 만약 아무런 커맨드를 안받았을 때는 정지해있도록
         rospy.loginfo("MISSION: Default Driving")
-        self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
-        self.mode_msg.data = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
+        self.joy_msg.axes[4] = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
+        self.joy_msg.buttons[3] = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
 
         # self.AUV_speed_pub.publish(self.speed_msg)
         # self.AUV_mode_pub.publish(self.mode_msg)
@@ -508,7 +502,7 @@ class MainLoop:
         rospy.loginfo("Buttons: %s", self.joystick_buttons)
 
         # 조이스틱 버튼으로 미션 활성화 (예: 세모 버튼이 버튼 인덱스 1이라고 가정)
-        if data.buttons[1] == 1:  # 세모 버튼이 눌렸을 때 -> 일단 미션 C 가 이런거라고 가정했습니다 수정 요망 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 미션C 조이스틱 버튼
+        if data.axes[7] == 1:  # 세모 버튼이 눌렸을 때 -> 일단 미션 C 가 이런거라고 가정했습니다 수정 요망 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 미션C 조이스틱 버튼
             rospy.loginfo("Received trigger to start mission_C.")
             self.mission_C = True
             self.mission_D_L = False
@@ -516,21 +510,21 @@ class MainLoop:
             self.mission_E = False
             self.mission_F = False
             rospy.loginfo("Received trigger to start mission_D_L.")    
-        elif data.buttons[1] == 2:
+        elif data.axes[6] == 1:
             self.mission_C = False
             self.mission_D_L = True
             self.mission_D_R = False        
             self.mission_E = False
             self.mission_F = False
             rospy.loginfo("Received trigger to start mission_D_R.")
-        elif data.buttons[1] == 3:
+        elif data.axes[6] == 1:
             self.mission_C = False
             self.mission_D_L = False
             self.mission_D_R = True        
             self.mission_E = False
             self.mission_F = False
             rospy.loginfo("Received trigger to start mission_E.")
-        elif data.buttons[1] == 4:
+        elif data.baxes[7] == -1:
             self.mission_C = False
             self.mission_D_L = False
             self.mission_D_R = False               
