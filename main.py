@@ -502,7 +502,7 @@ class MainLoop:
         rospy.loginfo("Buttons: %s", self.joystick_buttons)
 
         # 조이스틱 버튼으로 미션 활성화 (예: 세모 버튼이 버튼 인덱스 1이라고 가정)
-        if data.axes[7] == 1:  # 세모 버튼이 눌렸을 때 -> 일단 미션 C 가 이런거라고 가정했습니다 수정 요망 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 미션C 조이스틱 버튼
+        if self.joystick_axes[7] == 1:  # 세모 버튼이 눌렸을 때 -> 일단 미션 C 가 이런거라고 가정했습니다 수정 요망 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 미션C 조이스틱 버튼
             rospy.loginfo("Received trigger to start mission_C.")
             self.mission_C = True
             self.mission_D_L = False
@@ -510,21 +510,21 @@ class MainLoop:
             self.mission_E = False
             self.mission_F = False
             rospy.loginfo("Received trigger to start mission_D_L.")    
-        elif data.axes[6] == 1:
+        elif self.joystick_axes[6] == 1:
             self.mission_C = False
             self.mission_D_L = True
             self.mission_D_R = False        
             self.mission_E = False
             self.mission_F = False
             rospy.loginfo("Received trigger to start mission_D_R.")
-        elif data.axes[6] == 1:
+        elif self.joystick_axes[6] == -1:
             self.mission_C = False
             self.mission_D_L = False
             self.mission_D_R = True        
             self.mission_E = False
             self.mission_F = False
             rospy.loginfo("Received trigger to start mission_E.")
-        elif data.baxes[7] == -1:
+        elif self.joystick_axes[7] == -1:
             self.mission_C = False
             self.mission_D_L = False
             self.mission_D_R = False               
