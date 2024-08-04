@@ -5,10 +5,27 @@ import rospy
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from cv_bridge import CvBridge
+import pyzbar.pyzbar as pyzbar
+
+class QRdetect:
+    def __init__(self):
+        self.font = cv2.FONT_HERSHEY_SIMPLEX        
+
+
+    def read_frame(self, frame):
+        # QR 코드 정보 디코딩
+        barcodes = pyzbar.decode(frame)
+        barcode_data = []
+        for barcode in barcodes:
+            barcode_info = barcode.data.decode('utf-8')
+            barcode_data.append(barcode_info)
+        return barcode_data
+
 
 class MainLoop:
     def __init__(self):
         self.bridge = CvBridge()
+        self.qr_detector = QRdetect()  # QRdetect 클래스 인스턴스 생성        
         self.image_pub1 = rospy.Publisher("/camera1/image_raw", Image, queue_size=10)
         self.image_pub2 = rospy.Publisher("/camera2/image_raw", Image, queue_size=10)
         self.cap1 = cv2.VideoCapture(6)  # First camera
