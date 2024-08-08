@@ -1,0 +1,88 @@
+gst-launch-1.0 v4l2src device=/dev/video0 ! video/x-h264,width=1920,height=1080,framerate=30/1 ! h264parse ! rtph264pay ! udpsink host=192.168.123.5 port=5600
+
+ssh kudos2@192.168.123.7
+
+
+QR은 총 6개 / 미션은 총 4개
+R1 R2 R3
+R4 R5 R6
+
+
+-> 화면녹화를 핸드폰으로도 진행해서 숫자 읽기 미션은 한번만 화질을 확보한 뒤, 영상을 통해서 읽을 것
+
+
+🐷️화면녹화를 절때 잊지마세요🎂️🤪️🦏️
+
+
+
+[Robot PC]
+패키지에 cd 접근 후 ./client 192.168.123.5 10000
+[Control PC]
+패키지에 cd 접근 후 ./server 10000
+
+
+
+jihan5575@jihan5575-15ZD95P-GX56K:~/test_udp$ python3 udp.py
+
+
+
+
+🗾️<NUC> 
+ssh kudos2@192.168.123.7
+1. mavros-QGC연결
+APM
+
+2. 카메라 연결
+2-1. UDP 연결
+~/test_udp$ python3 test.py
+
+2-2. QGC-카메라 연결
+roslaunch usb_cam ..
+
+3. sonar보기
+roslaunch ping360...
+===============================================================================================
+===============================================================================================
+🇰🇷️<내 pc>
+1. mavros-QGC연결
+다운로드 -> QGC 키기
+
+2. 카메라 연결
+2-1. UDP 연결
+~/test_udp$ python3 udp.py
+
+2-2. QGC-카메라 연결
+roslaunch gst_server qgc
+
+3. sonar보기
+rqt_image_view
+3-1 새로만든 소나 패키지 
+roslaunch rviz_view_imu rviz_view.launch 
+ 
+ 
+     ping360_node (ping360_sonar/ping360_node)
+    transform_sonar_frame (tf/static_transform_publisher)
+
+ROS_MASTER_URI=http://192.168.123.5:11311
+
+process[transform_sonar_frame-1]: started with pid [3003]
+process[ping360_node-2]: started with pid [3004]
+Opening /dev/ttyUSB0 at 2000000 bps
+Failed to open the given serial port
+	 [Errno 5] Input/output error
+[ping360_node-2] process has died [pid 3004, exit code 1, cmd /home/kudos2/mavros_ws/src/ping360_sonar_python/nodes/ping360_node __name:=ping360_node __log:=/home/kudos2/.ros/log/3b706c12-8268-11ee-966d-4f5bed62497d/ping360_node-2.log].
+log file: /home/kudos2/.ros/log/3b706c12-8268-11ee-966d-4f5bed62497d/ping360_node-2*.log
+^C[transform_sonar_frame-1] killing on exit
+shutting down processing monitor...
+... shutting down processing monitor complete
+done
+
+
+
+
+==================================================
+==================================================
+
+
+
+
