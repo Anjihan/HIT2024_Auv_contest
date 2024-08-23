@@ -21,6 +21,7 @@ import pyzbar.pyzbar as pyzbar
 from sensor_msgs.msg import Joy
 import pyrealsense2 as rs
 
+import socket
 
 ref_zero = 165 #IMU데이터 기반으로 수정 필요  /Y가 전방
 D2R = 3.141592/180
@@ -46,6 +47,13 @@ class MainLoop:
     def __init__(self):
         self.bridge = CvBridge()
         self.qr_detector = QRdetect()  # QRdetect 클래스 인스턴스 생성
+        
+        self.B_IP = '127.0.0.1'  # 수신 측 IP 주소
+        self.B_PORT = 8080  # 첫 번째 카메라 포트 번호
+        self.B_PORT_2 = 8081  # 두 번째 카메라 포트 번호
+
+        # UDP 소켓을 생성합니다.
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
         #-----------------------------------------------------<<-mission 상태 변수->>--------------------------------------------------#
         #미션 상태 flag입니다. 이거 켜지면 해당 미션에 계속 들어감 -> 미션이 완전히 끝났으면 꺼줘야됨
@@ -144,6 +152,23 @@ class MainLoop:
             
         return ret1, frame1, ret2, frame2
 
+    def camera_send(self):
+        # 첫 번째 카메라로부터 이미지를 캡처합니다.
+        ret1, frame1 = self.cap.read()
+        if not ret1:
+            rospy.logwarn("Failed to capture image from first camera.")
+            return
+
+        # 첫 번째 카메라 이미지 전송
+        encoded, buffer = cv2.imencode('.jpg', frame1, [cv2.IMWRITE_JPEG_QUALITY, 50])
+        self.sock.sendto(buffer.tobytes(), (self.B_IP, self.B_PORT))
+
+        # 두 번째 카메라로부터 이미지를 캡처합니다.
+        ret2, frame2 = self.cap1.read()
+        if not ret1:
+            rospy.logwarn("Failed to capture image from second camera.")
+            return
+
     def image_callback(self, data): #ROS 이미지 받아와서 CV에서 처리가능하게 바꿈 -> (추후 영상처리 필요하면 이 함수에서 분기하세요) -> 처리한 CV영상 다시 ROS형식으로 publish
         # ROS 이미지 메시지에서 OpenCV 이미지로 변환
         cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
@@ -234,7 +259,7 @@ class MainLoop:
 
     def timerCallback(self, _event): #mainAlgorithm 30Hz 주기로 돌리는함수
         try:
-            self.camera_get()  # 카메라에서 이미지 가져오기 및 퍼블리시
+            self.camera_send()  # 카메라 UDP send
             self.mainAlgorithm()  # 메인 알고리즘 실행
         except Exception as e:
             rospy.logerr(f"Error in timerCallback: {e}")
