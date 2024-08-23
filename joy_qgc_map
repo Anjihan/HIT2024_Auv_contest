@@ -31,30 +31,34 @@
 <-- QGC -->
  
  <buttons>
-  x : [0]
-  o : [1]
-  ㅅ : [3]
-  ㅁ : [2]
-  L1 : [9]
-  R1 : [10]
-  share : [4]
-  option : [6]
-  P : [5]
-  L_nob : [7]
-  R_nob : [8]
+  x : [0] no actions 
+  o : [1] mode_manual
+  ㅅ : [3] mode_stabilize
+  ㅁ : [2] mode_depth_hold
   
-  +_x_L : [15]
-  +_x_R : [16]
+  L1 : [9] no actions 
+  R1 : [10] no actions 
   
-  +_y_U : [11],[13]
-  +_y_D : [12],[14]
+  share : [4] disarm
+  option : [6] arm
+  
+  P : [5] shift
+  
+  L_nob : [7] no actions
+  R_nob : [8] no actions
+  
+  +_x_L : [15] no actions
+  +_x_R : [16] no actions
+  
+  +_y_U : [11],[13] lights1 brighter / dimmer
+  +_y_D : [12],[14] lights2 brighter / dimmer
  
 ---
 
  <axis> -> qgc기준 왼쪽으로 이동시 +, 오른쪽으로 이동시 - 
-  L_nob_y : Throttle : U => -1 / D => +1
-  L_nob_x : Yaw : L => +1, R => -1 
-  R_nob_y : Forward : U => +1 / D => -1
+  L_nob_y : Forward : U => +1 / D => -1
+  L_nob_x : Yaw : L(ccw) => +1, R(cw) => -1 
+  R_nob_y : Throttle : U => -1 / D => +1
   R_nob_x : Lateral : L => +1, R => -1
  
  
