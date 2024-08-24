@@ -21,6 +21,7 @@ import pyzbar.pyzbar as pyzbar
 from sensor_msgs.msg import Joy
 import pyrealsense2 as rs
 
+import socket
 
 ref_zero = 165 #IMU데이터 기반으로 수정 필요  /Y가 전방
 D2R = 3.141592/180
@@ -46,6 +47,13 @@ class MainLoop:
     def __init__(self):
         self.bridge = CvBridge()
         self.qr_detector = QRdetect()  # QRdetect 클래스 인스턴스 생성
+        
+        self.B_IP = '192.168.123.8'  # 수신 측 IP 주소
+        self.B_PORT = 8080  # 첫 번째 카메라 포트 번호
+        self.B_PORT_2 = 8081  # 두 번째 카메라 포트 번호
+
+        # UDP 소켓을 생성합니다.
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
         #-----------------------------------------------------<<-mission 상태 변수->>--------------------------------------------------#
         #미션 상태 flag입니다. 이거 켜지면 해당 미션에 계속 들어감 -> 미션이 완전히 끝났으면 꺼줘야됨
@@ -144,6 +152,26 @@ class MainLoop:
             
         return ret1, frame1, ret2, frame2
 
+    def camera_send(self):
+        # 첫 번째 카메라로부터 이미지를 캡처합니다.
+        ret1, frame1 = self.cap1.read()
+        if not ret1:
+            rospy.logwarn("Failed to capture image from first camera.")
+            return
+
+        # 첫 번째 카메라 이미지 전송
+        encoded, buffer = cv2.imencode('.jpg', frame1, [cv2.IMWRITE_JPEG_QUALITY, 50])
+        self.sock.sendto(buffer.tobytes(), (self.B_IP, self.B_PORT))
+
+        # 두 번째 카메라로부터 이미지를 캡처합니다.
+        ret2, frame2 = self.cap2.read()
+        if not ret2:
+            rospy.logwarn("Failed to capture image from second camera.")
+            return
+        
+        encoded1, buffer1 = cv2.imencode('.jpg', frame2, [cv2.IMWRITE_JPEG_QUALITY, 50])
+        self.sock.sendto(buffer1.tobytes(), (self.B_IP, self.B_PORT_2))
+
     def image_callback(self, data): #ROS 이미지 받아와서 CV에서 처리가능하게 바꿈 -> (추후 영상처리 필요하면 이 함수에서 분기하세요) -> 처리한 CV영상 다시 ROS형식으로 publish
         # ROS 이미지 메시지에서 OpenCV 이미지로 변환
         cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
@@ -153,6 +181,7 @@ class MainLoop:
         
         # ROS 메시지 퍼블리시
         self.image_pub.publish(ros_image)
+        
     #=========  QR 인식 : 리스트 형식으로 출력이 되어서 숫자로 처리가능하게 바꿨음========#
     def QR_read_front(self):
         ret1, frame1, _, _ = self.camera_get()
@@ -213,13 +242,32 @@ class MainLoop:
     def Sound_callback(self, _data): #음향등대 어떻게 처리할지 몰라서 일단 만들어둠
         pass
 
+    def camera_get(self): #카메라 두개의 이미지를 동시에 받아오는 함수
+        ret1, frame1 = self.cap1.read()
+        ret2, frame2 = self.cap2.read()
+
+        if ret1:
+            img_msg1 = self.bridge.cv2_to_imgmsg(frame1, "bgr8")
+            self.image_pub1.publish(img_msg1)
+        else:
+            rospy.logwarn("Failed to capture frame from camera 0.")
+
+        if ret2:
+            img_msg2 = self.bridge.cv2_to_imgmsg(frame2, "bgr8")
+            self.image_pub2.publish(img_msg2)
+        else:
+            rospy.logwarn("Failed to capture frame from camera 6.")
+
+        return ret1, frame1, ret2, frame2
+
+
     def timerCallback(self, _event): #mainAlgorithm 30Hz 주기로 돌리는함수
         try:
-            self.mainAlgorithm()
-            pass
-        except:
-            pass
-    
+            self.camera_send()  # 카메라 UDP send
+            self.mainAlgorithm()  # 메인 알고리즘 실행
+        except Exception as e:
+            rospy.logerr(f"Error in timerCallback: {e}")
+                
 #===========================================================================#
 #===========================================================================#
 #=============================== 미션함수코딩구역 ==============================#
@@ -251,7 +299,7 @@ class MainLoop:
         if self.static_flag_D_L == False:
             self.stop_t1_D_L = rospy.get_time() # start time -> 미션 시작하는 시간(상수)        
             # self.mode_msg.data = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
-            self.joy_msg.buttons[3] = 1 #lsh  
+            self.joy_msg.buttons[2] = 1 #AJH
             # self.joy_msg.axis
             self.static_flag_D_L = True
   
@@ -259,14 +307,14 @@ class MainLoop:
         elif t2 - self.stop_t1_D_L <= 2:
             # self.speed_msg.data = 0 #왼쪽 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 왼쪽 레터럴
             self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-            self.joy_msg.axes[3] = 0.5 #lsh 
+            self.joy_msg.axes[3] = 0.5 #AJH
             
             
         # (5)초간 이전 각도로 주행 -> 전진해서 수면 QR에 가까워지기 위함 -> 2.5m 정도 왔다고 가정 ---------------튜닝 필요
-        elif t2 - self.stop_t1_D_L <= 7: #시간은 누적으로 계산하세요            
+        elif t2 - self.stop_t1_D_L <= 6: #시간은 누적으로 계산하세요            
             # self.speed_msg.data = 1000 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진
             self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-            self.joy_msg.axes[4] = 0.5 #lsh       
+            self.joy_msg.axes[1] = 0.5 #AJH 
   
         elif t2 - self.stop_t1_D_L <= 8: # else로 빼면 계속 켜질꺼같아서 일단 8초로 해둠
             self.joy_msg.axes = [0] * len(self.joy_msg.axes)
@@ -287,25 +335,31 @@ class MainLoop:
                 if number1 == 1:
                     # self.speed_msg.data = 0 #우측 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 우측 레터럴
                     self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-                    self.joy_msg.axes[3] = -0.5 #lsh
+                    self.joy_msg.axes[3] = -0.15 #AJH
                       
                 elif number1 == 2:
                     # self.speed_msg.data = 0 #왼쪽 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 왼쪽 레터럴
                     self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-                    self.joy_msg.axes[3] = 0.5 #lsh  
+                    self.joy_msg.axes[3] = 0.15 #AJH  
                 elif number1 == 3:
                     # self.speed_msg.data = 0 #하강 joystick 입력으로 바꾸면됨 ========================================================================= 하강
                     self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-                    self.joy_msg.axes[1] = 0.5 #lsh  
+                    self.joy_msg.axes[4] = -0.15 #AJH 
                 elif number1 == 4:
                     # self.speed_msg.data = 0 #상승 joystick 입력으로 바꾸면됨 ========================================================================= 상승
                     self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-                    self.joy_msg.axes[1] = -0.5 #lsh  
+                    self.joy_msg.axes[4] = 0.15 #AJH
                 else:
                     # self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
                     self.defaultDrive() 
                     self.mission_D_L_bottom_start = True  #바닥 qr로 가기 위한 flag            
                     self.mission_D_L_front_aline = False
+                    
+                    #일단 여기까지하고 꺼지도록 설정 0824 토요일 새벽
+                    self.mission_D_L = False  # 미션 종료 후 재설정
+                    rospy.loginfo("MISSION: QR_L_end")
+                    self.defaultDrive()  # 미션이 끝나면 기본 상태로 전환            
+
                     break
                 
         if self.mission_D_L_bottom_start == True: #내려간다음 top camera가 qr을 인식할때까지 전진 -> 자석 읽었다고 생각
@@ -315,19 +369,19 @@ class MainLoop:
             if self.static_flag_D_L_2 == False:
                 self.stop_t1_D_L_2 = rospy.get_time() # start time -> 미션 시작하는 시간(상수)        
                 # self.mode_msg.data = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
-                self.joy_msg.buttons[3] = 1 #lsh  
+                self.joy_msg.buttons[2] = 1 #AJH
                 self.static_flag_D_L_2 = True
 
             # (2)초간 depth hold 상태에서 아래로 -> 바닥 QR을 보기 위해서 최대한 내려야됨 ------------튜닝 필요
             elif t3 - self.stop_t1_D_L_2 <= 2:
                 # self.speed_msg.data = 0 #왼쪽 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 왼쪽 레터럴
                 self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-                self.joy_msg.axes[3] = 0.5 #lsh  
+                self.joy_msg.axes[3] = 0.5 #AJH 
             # 바닥QR을 찾기위해서 천천히 전진          
             else:
                 # self.speed_msg.data = 0 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진
                 self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-                self.joy_msg.axes[4] = 0.5 #lsh              
+                self.joy_msg.axes[1] = 0.5 #AJH           
                 if (self.qr_top_result == 1):
                     # self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
                     self.defaultDrive()
@@ -338,11 +392,11 @@ class MainLoop:
             rospy.loginfo("MISSION: QR_LL_front")                    
             # self.speed_msg.data = 0 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진 
             self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-            self.joy_msg.axes[4] = 0.5 #lsh                         
+            self.joy_msg.axes[1] = 0.5 #AJH                       
             if (self.qr_front_result == 1):
                 # self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
                 self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-                self.joy_msg.axes[4] = 0 #lsh  
+                self.joy_msg.axes[1] = 0 #AJH
                 self.mission_D_L_front_end = True
                 self.mission_D_L_front_start = False            
         
@@ -350,24 +404,137 @@ class MainLoop:
             rospy.loginfo("MISSION: QR_LL_front_end")            
             # self.speed_msg.data = 0 #빠르게 전진 joystick 입력으로 바꾸면됨 ========================================================================= 빠르게 전진  
             self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-            self.joy_msg.axes[4] = 0.7 #lsh                     
+            self.joy_msg.axes[1] = 0.7 #AJH                 
             self.mission_D_L = False    
                                         
         # self.AUV_speed_pub.publish(self.speed_msg)
         # self.AUV_mode_pub.publish(self.mode_msg)
-        self.AUV_pub.publish(self.joy_msg) #lsh
+        self.AUV_pub.publish(self.joy_msg) #AJH
 
 #=================================================================
     def QR_code_Drive_R(self, _data): #mission D QR 코드 미션 R구간 -> L에 대하여 반대로 코드 짜면됨
         rospy.loginfo("MISSION: QR_RR")
+        self.qr_front_result = self.QR_read_front()
+        self.qr_top_result = self.QR_read_top()
+        
         t2 = rospy.get_time() #-> 갱신되면서 변할 시간 (변수) 
 
         # 미션을 처음 시작하는 경우 시간을 stop_t1으로 저장함
-        if self.static_flag_D_R == False:
-            self.stop_t1 = rospy.get_time() # start time -> 미션 시작하는 시간(상수)        
-            self.joy_msg.buttons[3] = 1 #lsh   #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
-            self.static_flag_D_R = True
+        if self.static_flag_D_L == False:
+            self.stop_t1_D_L = rospy.get_time() # start time -> 미션 시작하는 시간(상수)        
+            # self.mode_msg.data = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
+            self.joy_msg.buttons[2] = 1 #AJH
+            # self.joy_msg.axis
+            self.static_flag_D_L = True
+  
+        # (2)초간 depth hold 상태에서 왼쪽으로 -> 화각에 왼쪽 라인의 QR만 보이게하기 위함 -> 왼쪽 라인이 카메라 중심에 오도록 맞춰야됨 -------튜닝 필요
+        elif t2 - self.stop_t1_D_L <= 2:
+            # self.speed_msg.data = 0 #오른쪽 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 오른쪽 레터럴
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+            self.joy_msg.axes[3] = -0.5 #AJH
+            
+            
+        # (5)초간 이전 각도로 주행 -> 전진해서 수면 QR에 가까워지기 위함 -> 2.5m 정도 왔다고 가정 ---------------튜닝 필요
+        elif t2 - self.stop_t1_D_L <= 6: #시간은 누적으로 계산하세요            
+            # self.speed_msg.data = 1000 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+            self.joy_msg.axes[1] = 0.5 #AJH 
+  
+        elif t2 - self.stop_t1_D_L <= 8: # else로 빼면 계속 켜질꺼같아서 일단 8초로 해둠
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+            self.mission_D_L_front_aline = True #정면카메라 색상 정렬 코드 flag ON
+             
+        else:
+            pass
+       
+        if self.mission_D_L_front_aline == True: #정면카메라 색상 정렬 부분
+            rospy.loginfo("MISSION: QR_RR_aline")            
+            while not rospy.is_shutdown():
+                ret1, frame1, ret2, frame2 = self.camera_get()
 
+                if ret1:
+                    number1 = self.center_mission(frame1, self.lower_hsv1, self.upper_hsv1, "Camera 1")
+                    rospy.loginfo(f"Camera 1 detected number: {number1}")
+
+                if number1 == 1:
+                    # self.speed_msg.data = 0 #우측 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 우측 레터럴
+                    self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+                    self.joy_msg.axes[3] = -0.15 #AJH
+                      
+                elif number1 == 2:
+                    # self.speed_msg.data = 0 #왼쪽 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 왼쪽 레터럴
+                    self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+                    self.joy_msg.axes[3] = 0.15 #AJH  
+                elif number1 == 3:
+                    # self.speed_msg.data = 0 #하강 joystick 입력으로 바꾸면됨 ========================================================================= 하강
+                    self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+                    self.joy_msg.axes[4] = -0.15 #AJH 
+                elif number1 == 4:
+                    # self.speed_msg.data = 0 #상승 joystick 입력으로 바꾸면됨 ========================================================================= 상승
+                    self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+                    self.joy_msg.axes[4] = 0.15 #AJH
+                else:
+                    # self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
+                    self.defaultDrive() 
+                    self.mission_D_L_bottom_start = True  #바닥 qr로 가기 위한 flag            
+                    self.mission_D_L_front_aline = False
+                    
+                    #일단 여기까지하고 꺼지도록 설정 0824 토요일 새벽
+                    self.mission_D_R = False  # 미션 종료 후 재설정
+                    rospy.loginfo("MISSION: QR_R_end")
+                    self.defaultDrive()  # 미션이 끝나면 기본 상태로 전환            
+
+                    break
+                
+        if self.mission_D_L_bottom_start == True: #내려간다음 top camera가 qr을 인식할때까지 전진 -> 자석 읽었다고 생각
+            rospy.loginfo("MISSION: QR_LL_bottom")        
+            t3 = rospy.get_time() #-> 갱신되면서 변할 시간 (변수)
+            # 미션을 처음 시작하는 경우 시간을 stop_t1으로 저장함
+            if self.static_flag_D_L_2 == False:
+                self.stop_t1_D_L_2 = rospy.get_time() # start time -> 미션 시작하는 시간(상수)        
+                # self.mode_msg.data = 1 #depth hold joystick 입력으로 바꾸면됨 =========================================================================depth hold
+                self.joy_msg.buttons[2] = 1 #AJH
+                self.static_flag_D_L_2 = True
+
+            # (2)초간 depth hold 상태에서 아래로 -> 바닥 QR을 보기 위해서 최대한 내려야됨 ------------튜닝 필요
+            elif t3 - self.stop_t1_D_L_2 <= 2:
+                # self.speed_msg.data = 0 #왼쪽 레터럴 joystick 입력으로 바꾸면됨 ========================================================================= 왼쪽 레터럴
+                self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+                self.joy_msg.axes[3] = 0.5 #AJH 
+            # 바닥QR을 찾기위해서 천천히 전진          
+            else:
+                # self.speed_msg.data = 0 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진
+                self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+                self.joy_msg.axes[1] = 0.5 #AJH           
+                if (self.qr_top_result == 1):
+                    # self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
+                    self.defaultDrive()
+                    self.mission_D_L_front_start = True
+                    self.mission_D_L_bottom_start = False
+                    
+        if self.mission_D_L_front_start == True:
+            rospy.loginfo("MISSION: QR_LL_front")                    
+            # self.speed_msg.data = 0 #전진 joystick 입력으로 바꾸면됨 ========================================================================= 전진 
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+            self.joy_msg.axes[1] = 0.5 #AJH                       
+            if (self.qr_front_result == 1):
+                # self.speed_msg.data = 0 #정지 중립위치 joystick 입력으로 바꾸면됨 ========================================================================= 정지
+                self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+                self.joy_msg.axes[1] = 0 #AJH
+                self.mission_D_L_front_end = True
+                self.mission_D_L_front_start = False            
+        
+        if self.mission_D_L_front_end == True:
+            rospy.loginfo("MISSION: QR_LL_front_end")            
+            # self.speed_msg.data = 0 #빠르게 전진 joystick 입력으로 바꾸면됨 ========================================================================= 빠르게 전진  
+            self.joy_msg.axes = [0] * len(self.joy_msg.axes)
+            self.joy_msg.axes[1] = 0.7 #AJH                 
+            self.mission_D_L = False    
+                                        
+        # self.AUV_speed_pub.publish(self.speed_msg)
+        # self.AUV_mode_pub.publish(self.mode_msg)
+        self.AUV_pub.publish(self.joy_msg) #AJH
+        
     def center_point(self, image): #지정한 영역 컨투어 중심에 빨간점을 찍는 메소드
         if image is None or image.size == 0:
             rospy.logwarn("Received an empty image in center_point method.")
@@ -473,10 +640,10 @@ class MainLoop:
         # depth hold 0.5m 이동 후 천천히 전진 (5)초 -> 괄호 친 숫자는 튜닝해야되는 변수
         rospy.loginfo(f"static_flag_C: {self.static_flag_C}")
         
-        # 미션을 처음 시작하는 경우 시간을 stop_t1으로 저장함
+        # 미션을 처음 시작하는 경우 시간을 stop_t1으로 저장함 => 일단 stabilize
         if not self.static_flag_C:  # self.static_flag_C == False 대신 not self.static_flag_C 사용
             self.stop_t1_C = rospy.get_time() # start time -> 미션 시작하는 시간(상수)
-            self.joy_msg.buttons[3] = 1 #lsh
+            self.joy_msg.buttons[2] = 1 #AJH
             rospy.loginfo(f"Stop time set: {self.stop_t1_C}")
             self.static_flag_C = True
             rospy.loginfo(f"static_flag_C set to True")
@@ -487,14 +654,14 @@ class MainLoop:
         # (2)초간 depth hold에서 아래로 -> 0.5m 맞추기
         if t2 - self.stop_t1_C <= 2:
             self.joy_msg.axes = [0] * len(self.joy_msg.axes)
-            self.joy_msg.axes[1] = 0.5 #lsh
+            self.joy_msg.axes[4] = -0.5 #AJH
             rospy.loginfo("MISSION: GOAL_down")
             
         # (5)초간 이전 각도로 주행 -> 골대 지나서 얼만큼 가는지 튜닝해야됨
-        elif t2 - self.stop_t1_C <= 7: #시간은 누적으로 계산하세요
+        elif t2 - self.stop_t1_C <= 6: #시간은 누적으로 계산하세요
             rospy.loginfo("MISSION: GOAL_foward1")
             self.joy_msg.axes = [0] * len(self.joy_msg.axes)            
-            self.joy_msg.axes[4] = 0.5 #lsh
+            self.joy_msg.axes[1] = 0.5 #AJH
             rospy.loginfo("MISSION: GOAL_foward2")
     
         else:
@@ -503,7 +670,7 @@ class MainLoop:
             rospy.loginfo("MISSION: GOAL_end")
             self.defaultDrive()  # 미션이 끝나면 기본 상태로 전환            
                             
-        self.AUV_pub.publish(self.joy_msg) #lsh
+        self.AUV_pub.publish(self.joy_msg) #AJH
 
 
     def defaultDrive(self): #기본 AUV 알고리즘에서 주행은 정지로 설정 -> 만약 아무런 커맨드를 안받았을 때는 정지해있도록
@@ -512,7 +679,7 @@ class MainLoop:
         self.joy_msg.axes = [0] * len(self.joy_msg.axes)
         
         # depth hold 버튼을 활성화
-        self.joy_msg.buttons[3] = 1
+        self.joy_msg.buttons[2] = 1 #AJH
         
         # 기본 상태로 publish
         self.AUV_pub.publish(self.joy_msg)
@@ -527,33 +694,35 @@ class MainLoop:
         self.joystick_buttons = data.buttons
         
         # 배열의 길이를 로그로 출력
-        rospy.loginfo(f"Axes length: {len(self.joystick_axes)}")
-        rospy.loginfo(f"Buttons length: {len(self.joystick_buttons)}")
-        
+        # rospy.loginfo(f"Axes length: {len(self.joystick_axes)}")
+        # rospy.loginfo(f"Buttons length: {len(self.joystick_buttons)}")
         # 나머지 로직
-        if len(self.joystick_axes) > 7 and self.joystick_axes[7] == 1:
+        if len(self.joystick_axes) > 7 and self.joystick_buttons[4] == 1: #L1 버튼이 골대미션
             rospy.loginfo("Received trigger to start mission_C.")
             self.mission_C = True
             self.mission_D_L = False
             self.mission_D_R = False        
             self.mission_E = False
             self.mission_F = False
+                
+        elif len(self.joystick_axes) > 6 and self.joystick_axes[6] == 1: #십자 왼쪽 버튼이 QR L 미션
             rospy.loginfo("Received trigger to start mission_D_L.")    
-        elif len(self.joystick_axes) > 6 and self.joystick_axes[6] == 1:
             self.mission_C = False
             self.mission_D_L = True
             self.mission_D_R = False        
             self.mission_E = False
             self.mission_F = False
+            
+        elif len(self.joystick_axes) > 6 and self.joystick_axes[6] == -1: #십자 왼쪽 버튼이 QR R 미션
             rospy.loginfo("Received trigger to start mission_D_R.")
-        elif len(self.joystick_axes) > 6 and self.joystick_axes[6] == -1:
             self.mission_C = False
             self.mission_D_L = False
             self.mission_D_R = True        
             self.mission_E = False
             self.mission_F = False
-            rospy.loginfo("Received trigger to start mission_E.")
-        elif len(self.joystick_axes) > 7 and self.joystick_axes[7] == -1:
+            
+        elif len(self.joystick_axes) > 7 and self.joystick_buttons[0] == 1: # X 버튼이 강제종료 버튼 
+            rospy.loginfo("Received trigger to STOP.")
             self.mission_C = False
             self.mission_D_L = False
             self.mission_D_R = False               
@@ -578,7 +747,7 @@ class MainLoop:
         elif self.mission_D_R == True:
             self.QR_code_Drive_R()
 
-        # # E. 음향등대
+        # # E. 강제정지 -> defaultDrive로
         elif self.mission_E == True:
             self.defaultDrive()
             
@@ -595,11 +764,18 @@ def nothing(x):
     pass
 
 def run():
-
-    rospy.init_node("main_class_run")
-    control = MainLoop()
-    rospy.Timer(rospy.Duration(1.0/10.0), control.timerCallback) 
-    rospy.spin()
-
+    try:
+        rospy.init_node("main_class_run")
+        control = MainLoop()
+        rospy.Timer(rospy.Duration(1.0/10.0), control.timerCallback) 
+        rospy.spin()
+    except rospy.ROSInterruptException:
+        pass
+    finally:
+        control.cap1.release()
+        control.cap2.release()
+        control.sock.close()
+        # cv2.destroyAllWindows()
+        
 if __name__ == "__main__":
     run()
